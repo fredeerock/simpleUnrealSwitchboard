@@ -5,6 +5,7 @@ from PyQt6 import QtWidgets, QtGui, QtCore
 import os
 import threading
 import time  # Import the time module
+import signal
 
 class UnrealSyncApp(QtWidgets.QWidget):
     def __init__(self):
@@ -14,6 +15,8 @@ class UnrealSyncApp(QtWidgets.QWidget):
             self.uprojectPath = 'C:\\Users\\dostr\\Documents\\Unreal Projects\\gitSwitchboard\\gitSwitchboard.uproject'
             self.serverProcess = None
             self.session_name = 'Session_1'
+            self.listener_ip = '127.0.0.1'
+            self.concert_server_name = 'unrealMUS'
             self.initUI()
         except Exception as e:
             self.logMessage(f'Error during initialization: {e}')
@@ -24,16 +27,50 @@ class UnrealSyncApp(QtWidgets.QWidget):
             self.setGeometry(100, 100, 400, 600)
 
             layout = QtWidgets.QVBoxLayout()
+            formLayout = QtWidgets.QFormLayout()
 
             # Start server button
             self.startServerButton = QtWidgets.QPushButton('Start Multiuser Server', self)
             self.startServerButton.clicked.connect(self.startServer)
 
-            # Textbox for Concert session name
+            # Label and textbox for Concert server name
+            concertServerNameLabel = QtWidgets.QLabel('Concert Server Name:', self)
+            self.concertServerNameTextbox = QtWidgets.QLineEdit(self)
+            self.concertServerNameTextbox.setPlaceholderText('Concert Server Name')
+            self.concertServerNameTextbox.setText(self.concert_server_name)
+            self.concertServerNameTextbox.setToolTip('Specify the name of the Concert server (Multi-User server). Default is "unrealMUS".')
+            self.concertServerNameTextbox.textChanged.connect(self.updateConcertServerName)
+
+            # Label and textbox for Concert session name
+            concertSessionNameLabel = QtWidgets.QLabel('Concert Session Name:', self)
             self.concertSessionNameTextbox = QtWidgets.QLineEdit(self)
             self.concertSessionNameTextbox.setPlaceholderText('Concert Session Name')
             self.concertSessionNameTextbox.setText('Session_1')
+            self.concertSessionNameTextbox.setToolTip('Specify the name of the Concert session. Default is "Session_1".')
             self.concertSessionNameTextbox.textChanged.connect(self.updateConcertSessionName)
+
+            # Label and textbox for Listener IP address
+            listenerIpLabel = QtWidgets.QLabel('Listener IP Address:', self)
+            self.listenerIpTextbox = QtWidgets.QLineEdit(self)
+            self.listenerIpTextbox.setPlaceholderText('Listener IP Address')
+            self.listenerIpTextbox.setText(self.listener_ip)
+            self.listenerIpTextbox.setToolTip('Specify the IP address of the listener application. Default is "127.0.0.1".')
+            self.listenerIpTextbox.textChanged.connect(self.updateListenerIp)
+
+            # Label and textbox for Unreal Editor path
+            unrealEditorPathLabel = QtWidgets.QLabel('Path to Unreal Editor:', self)
+            self.unrealEditorPathTextbox = QtWidgets.QLineEdit(self)
+            self.unrealEditorPathTextbox.setPlaceholderText('Path to Unreal Editor')
+            self.unrealEditorPathTextbox.setText(self.unrealEditorPath)
+            self.unrealEditorPathTextbox.setToolTip('Specify the path to the Unreal Editor executable.')
+            self.unrealEditorPathTextbox.textChanged.connect(self.updateUnrealEditorPath)
+
+            # Label and textbox for .uproject file path
+            uprojectPathLabel = QtWidgets.QLabel('Path to .uproject file:', self)
+            self.uprojectPathTextbox = QtWidgets.QLineEdit(self)
+            self.uprojectPathTextbox.setPlaceholderText('Path to .uproject file')
+            self.uprojectPathTextbox.setText(self.uprojectPath)
+            self.uprojectPathTextbox.setToolTip('Specify the path to the .uproject file.')
 
             # Launch Unreal Editor button
             launchEditorButton = QtWidgets.QPushButton('Launch Unreal Editor', self)
@@ -51,26 +88,21 @@ class UnrealSyncApp(QtWidgets.QWidget):
             browseUprojectButton = QtWidgets.QPushButton('Browse .uproject File', self)
             browseUprojectButton.clicked.connect(self.browseUproject)
 
-            # Textbox for Unreal Editor path
-            self.unrealEditorPathTextbox = QtWidgets.QLineEdit(self)
-            self.unrealEditorPathTextbox.setPlaceholderText('Path to Unreal Editor')
-            self.unrealEditorPathTextbox.setText(self.unrealEditorPath)
-            self.unrealEditorPathTextbox.textChanged.connect(self.updateUnrealEditorPath)
+            # Adding widgets to form layout
+            formLayout.addRow(concertServerNameLabel, self.concertServerNameTextbox)
+            formLayout.addRow(concertSessionNameLabel, self.concertSessionNameTextbox)
+            formLayout.addRow(listenerIpLabel, self.listenerIpTextbox)
+            formLayout.addRow(unrealEditorPathLabel, self.unrealEditorPathTextbox)
+            formLayout.addRow(uprojectPathLabel, self.uprojectPathTextbox)
 
-            # Textbox for .uproject file path
-            self.uprojectPathTextbox = QtWidgets.QLineEdit(self)
-            self.uprojectPathTextbox.setPlaceholderText('Path to .uproject file')
-            self.uprojectPathTextbox.setText(self.uprojectPath)
-
-            # Adding widgets to layout
+            # Adding buttons to layout
+            layout.addWidget(self.startServerButton)
             layout.addWidget(launchEditorButton)
             layout.addWidget(launchClientButton)
-            layout.addWidget(self.startServerButton)
-            layout.addWidget(self.concertSessionNameTextbox)
             layout.addWidget(browseEditorButton)
-            layout.addWidget(self.unrealEditorPathTextbox)
             layout.addWidget(browseUprojectButton)
-            layout.addWidget(self.uprojectPathTextbox)
+            layout.addLayout(formLayout)
+
             self.setLayout(layout)
         except Exception as e:
             self.logMessage(f'Error during UI setup: {e}')
@@ -116,7 +148,7 @@ class UnrealSyncApp(QtWidgets.QWidget):
 
             command = [
                 server_path,
-                '-CONCERTSERVER=unrealMUS',
+                f'-CONCERTSERVER={self.concert_server_name}',
                 '-UDPMESSAGING_SHARE_KNOWN_NODES=1',
                 '-UDPMESSAGING_TRANSPORT_UNICAST=127.0.0.1:9030',
                 '-UDPMESSAGING_TRANSPORT_MULTICAST=230.0.0.1:6666',
@@ -181,20 +213,25 @@ class UnrealSyncApp(QtWidgets.QWidget):
                 self.logMessage('Error: Multi-User session not started.')
                 return
 
-            command = [
-                self.unrealEditorPath, self.uprojectPath,
-                '-game', '/Game/Main', '-messaging', '-nosplash', '-fixedseed',
-                '-UDPMESSAGING_TRANSPORT_MULTICAST=230.0.0.1:6666',
-                '-UDPMESSAGING_TRANSPORT_UNICAST=127.0.0.1:0',
-                '-UDPMESSAGING_TRANSPORT_STATIC=127.0.0.1:9030',
-                f'-CONCERTSESSION={self.session_name}',
-                '-CONCERTDISPLAYNAME=Node_0'
-            ]
-            self.logMessage(f"Executing command: {' '.join(command)}")
-            subprocess.Popen(command)
-            self.logMessage('Client launched in viewer mode')
+            data = {
+                'unrealEditorPath': self.unrealEditorPath,
+                'uprojectPath': self.uprojectPath,
+                'session_name': self.session_name,
+                'concert_server_name': self.concert_server_name
+            }
+            self.logMessage(f"Sending data to listener: {data}")
+            self.sendDataToListener(data)
         except Exception as e:
             self.logMessage(f'Error launching client: {e}')
+
+    def sendDataToListener(self, data):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((self.listener_ip, 65432))
+                s.sendall(str(data).encode())
+                self.logMessage('Data sent to listener')
+        except Exception as e:
+            self.logMessage(f'Error sending data to listener: {e}')
 
     def launchLocalServer(self):
         try:
@@ -210,12 +247,14 @@ class UnrealSyncApp(QtWidgets.QWidget):
 
             command = [
                 self.unrealEditorPath, self.uprojectPath,
-                '/Game/Main', 'Log=Editor_1.log',
-                '-CONCERTAUTOCONNECT', f'-CONCERTSESSION={self.session_name}',
-                '-CONCERTDISPLAYNAME=Editor_1',
-                '-UDPMESSAGING_TRANSPORT_MULTICAST=230.0.0.1:6666',
-                '-UDPMESSAGING_TRANSPORT_UNICAST=127.0.0.1:0',
-                '-UDPMESSAGING_TRANSPORT_STATIC=127.0.0.1:9030'
+                'Log=Editor_1.log',
+                '-CONCERTRETRYAUTOCONNECTONERROR', '-CONCERTAUTOCONNECT',
+                f'-CONCERTSERVER="{self.concert_server_name}"', f'-CONCERTSESSION="{self.session_name}"',
+                '-CONCERTDISPLAYNAME="Editor_1"', '-StageFriendlyName="Editor_1"',
+                '-DPCVars="Slate.bAllowThrottling=0"', '-ConcertReflectVisibility=1',
+                '-UDPMESSAGING_TRANSPORT_MULTICAST="230.0.0.1:6666"',
+                '-UDPMESSAGING_TRANSPORT_UNICAST="127.0.0.1:0"',
+                '-UDPMESSAGING_TRANSPORT_STATIC="127.0.0.1:9030"'
             ]
             self.logMessage(f"Executing command: {' '.join(command)}")
             subprocess.Popen(command)
@@ -241,13 +280,26 @@ class UnrealSyncApp(QtWidgets.QWidget):
     def updateConcertSessionName(self, text):
         self.session_name = text
 
+    def updateListenerIp(self, text):
+        self.listener_ip = text
+
+    def updateConcertServerName(self, text):
+        self.concert_server_name = text
+
 def main():
     try:
         app = QtWidgets.QApplication(sys.argv)
         ex = UnrealSyncApp()
         ex.show()
         app.aboutToQuit.connect(ex.handleAppQuit)
+
+        # Handle SIGINT (Ctrl-C)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+
         sys.exit(app.exec())
+    except KeyboardInterrupt:
+        print('Application interrupted by user')
+        sys.exit(0)
     except Exception as e:
         print(f'Unhandled exception: {e}')
 
