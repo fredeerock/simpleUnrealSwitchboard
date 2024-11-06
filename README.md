@@ -15,7 +15,7 @@ This project provides a tool to sync and launch Unreal Engine projects in a mult
 1. Clone the repository:
     ```sh
     git clone https://github.com/fredeerock/simpleUnrealSwitchboard.git
-    cd gitSwitchboard
+    cd simpleUnrealSwitchboard
     ```
 
 2. Install the required Python packages:
