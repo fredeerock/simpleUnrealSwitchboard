@@ -10,27 +10,15 @@ This project provides a tool to sync and launch Unreal Engine projects in a mult
 - Compare files using checksums to ensure data integrity
 - Progress dialog for sync operations
 
-## Installation
+## Download
 
-1. Clone the repository:
-    ```sh
-    git clone https://github.com/fredeerock/simpleUnrealSwitchboard.git
-    cd simpleUnrealSwitchboard
-    ```
-
-2. Install the required Python packages:
-    ```sh
-    pip install PyQt6
-    ```
+Download the latest binares from the [releases page](https://github.com/fredeerock/simpleUnrealSwitchboard/releases).
 
 ## Usage
 
 ### Main Application
 
-1. Run the main application:
-    ```sh
-    python main.py
-    ```
+1. Open SimpleUnrealSwitchboard.exe on the computer you use to control Unreal. 
 
 2. Configure the paths for the Unreal Editor and .uproject files in the UI.
 
@@ -38,10 +26,7 @@ This project provides a tool to sync and launch Unreal Engine projects in a mult
 
 ### Listener Application
 
-1. Run the listener application on the target machine:
-    ```sh
-    python listener.py
-    ```
+1. Open SimpleUnrealSwitchboardListener.exe on the computer you want Unreal to be viewable on. 
 
 2. Ensure the listener is running and accessible from the main application.
 
@@ -59,3 +44,50 @@ This project provides a tool to sync and launch Unreal Engine projects in a mult
 
 1. Click the "Sync Folders" button to start the sync process.
 2. Files will be compared using checksums and only changed files will be transferred.
+
+## Running From Source
+
+1. Clone the repository:
+    ```sh
+    git clone https://github.com/fredeerock/simpleUnrealSwitchboard.git
+    cd simpleUnrealSwitchboard
+    ```
+
+2. Install the required Python packages:
+    ```sh
+    pip install PyQt6
+    ```
+
+1. Run the main application:
+    ```sh
+    python main.py
+    ```
+
+1. Run the listener application:
+    ```sh
+    python listener.py
+    ```
+
+## Building Executables
+
+To create standalone executables:
+
+1. Install PyInstaller:
+    ```sh
+    pip install pyinstaller
+    ```
+
+2. Build the executables:
+    ```sh
+    # Build main application
+    pyinstaller --name SimpleUnrealSwitchboard --onefile --noconsole main.py
+
+    # Build listener application
+    pyinstaller --name SimpleUnrealSwitchboardListener --onefile listener.py
+    ```
+
+The executables will be created in the `dist` folder:
+- `UnrealSwitchboard.exe` - Main application
+- `UnrealSwitchboardListener.exe` - Listener application
+
+These executables can be distributed to users who don't have Python installed.
