@@ -4,19 +4,70 @@ import socket
 from PyQt6 import QtWidgets, QtGui, QtCore
 import os
 import threading
-import time  # Import the time module
+import time
 import signal
+import shutil
+import hashlib
+import ast
+from PyQt6.QtCore import QThread, pyqtSignal
+
+class SyncThread(QThread):
+    progress = pyqtSignal(str)
+    finished = pyqtSignal()
+    
+    def __init__(self, app, editor_folder, listener_folder):
+        super().__init__()
+        self.app = app
+        self.editor_folder = editor_folder
+        self.listener_folder = listener_folder
+
+    def run(self):
+        try:
+            if not os.path.isdir(self.editor_folder):
+                self.progress.emit('Error: Editor folder path is invalid.')
+                return
+
+            self.progress.emit(f'Syncing from {self.editor_folder} to {self.app.listener_ip}:{self.listener_folder}')
+
+            # Get checksums of files on the listener side
+            listener_checksums = self.app.getListenerChecksums(self.listener_folder)
+            self.progress.emit('Received listener checksums')
+
+            # Send the contents of the editor folder to the listener
+            for root, dirs, files in os.walk(self.editor_folder):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    relative_path = os.path.relpath(file_path, self.editor_folder)
+
+                    # Calculate checksum of the local file
+                    local_checksum = self.app.calculate_checksum(file_path)
+
+                    # Compare checksums and send file if different
+                    if listener_checksums.get(relative_path) != local_checksum:
+                        self.progress.emit(f'Syncing {relative_path}...')
+                        self.app.sendFileToListener(file_path, os.path.join(self.listener_folder, relative_path))
+                    else:
+                        self.progress.emit(f'Skipping {relative_path} (unchanged)')
+
+            self.progress.emit('Folders synced successfully.')
+            self.finished.emit()
+        except Exception as e:
+            self.progress.emit(f'Error syncing folders: {e}')
+            self.finished.emit()
 
 class UnrealSyncApp(QtWidgets.QWidget):
     def __init__(self):
         try:
             super().__init__()
+            # Initialize default paths and variables
             self.unrealEditorPath = 'C:\\Program Files\\Epic Games\\UE_5.4\\Engine\\Binaries\\Win64\\UnrealEditor.exe'
             self.uprojectPath = 'C:\\Users\\dostr\\Documents\\Unreal Projects\\gitSwitchboard\\gitSwitchboard.uproject'
             self.serverProcess = None
             self.session_name = 'Session_1'
             self.listener_ip = '127.0.0.1'
             self.concert_server_name = 'unrealMUS'
+            self.listenerUprojectPath = 'C:\\Users\\dostr\\OneDrive - Louisiana State University\\Desktop\\synctest\\gitSwitchboard.uproject'
+            self.listenerUnrealEditorPath = ''
             self.initUI()
         except Exception as e:
             self.logMessage(f'Error during initialization: {e}')
@@ -66,11 +117,26 @@ class UnrealSyncApp(QtWidgets.QWidget):
             self.unrealEditorPathTextbox.textChanged.connect(self.updateUnrealEditorPath)
 
             # Label and textbox for .uproject file path
-            uprojectPathLabel = QtWidgets.QLabel('Path to .uproject file:', self)
+            uprojectPathLabel = QtWidgets.QLabel('Editor .uproject file:', self)
             self.uprojectPathTextbox = QtWidgets.QLineEdit(self)
-            self.uprojectPathTextbox.setPlaceholderText('Path to .uproject file')
+            self.uprojectPathTextbox.setPlaceholderText('Editor .uproject file')
             self.uprojectPathTextbox.setText(self.uprojectPath)
-            self.uprojectPathTextbox.setToolTip('Specify the path to the .uproject file.')
+            self.uprojectPathTextbox.setToolTip('Specify the path to the .uproject file for the editor.')
+
+            # Label and textbox for listener .uproject file path
+            listenerUprojectPathLabel = QtWidgets.QLabel('Listener .uproject Path:', self)
+            self.listenerUprojectPathTextbox = QtWidgets.QLineEdit(self)
+            self.listenerUprojectPathTextbox.setPlaceholderText('Listener .uproject Path')
+            self.listenerUprojectPathTextbox.setText(self.listenerUprojectPath)  # Set initial text
+            self.listenerUprojectPathTextbox.setToolTip('Specify the path to the .uproject file for the listener.')
+            self.listenerUprojectPathTextbox.textChanged.connect(self.updateListenerUprojectPath)
+
+            # Label and textbox for listener Unreal Editor path
+            listenerUnrealEditorPathLabel = QtWidgets.QLabel('Listener Unreal Editor Path:', self)
+            self.listenerUnrealEditorPathTextbox = QtWidgets.QLineEdit(self)
+            self.listenerUnrealEditorPathTextbox.setPlaceholderText('Listener Unreal Editor Path')
+            self.listenerUnrealEditorPathTextbox.setToolTip('Specify the path to the Unreal Editor executable for the listener.')
+            self.listenerUnrealEditorPathTextbox.textChanged.connect(self.updateListenerUnrealEditorPath)
 
             # Launch Unreal Editor button
             launchEditorButton = QtWidgets.QPushButton('Launch Unreal Editor', self)
@@ -80,6 +146,10 @@ class UnrealSyncApp(QtWidgets.QWidget):
             launchClientButton = QtWidgets.QPushButton('Launch Unreal Client', self)
             launchClientButton.clicked.connect(self.launchClient)
 
+            # Sync folders button
+            syncFoldersButton = QtWidgets.QPushButton('Sync Folders', self)
+            syncFoldersButton.clicked.connect(self.syncFolders)
+
             # Browse Unreal Editor button
             browseEditorButton = QtWidgets.QPushButton('Browse Unreal Editor', self)
             browseEditorButton.clicked.connect(self.browseUnrealEditor)
@@ -88,20 +158,29 @@ class UnrealSyncApp(QtWidgets.QWidget):
             browseUprojectButton = QtWidgets.QPushButton('Browse .uproject File', self)
             browseUprojectButton.clicked.connect(self.browseUproject)
 
+            # Status box for sync operation
+            self.statusBox = QtWidgets.QTextEdit(self)
+            self.statusBox.setReadOnly(True)
+            self.statusBox.setPlaceholderText('Status messages will appear here...')
+
             # Adding widgets to form layout
             formLayout.addRow(concertServerNameLabel, self.concertServerNameTextbox)
             formLayout.addRow(concertSessionNameLabel, self.concertSessionNameTextbox)
             formLayout.addRow(listenerIpLabel, self.listenerIpTextbox)
             formLayout.addRow(unrealEditorPathLabel, self.unrealEditorPathTextbox)
             formLayout.addRow(uprojectPathLabel, self.uprojectPathTextbox)
+            formLayout.addRow(listenerUprojectPathLabel, self.listenerUprojectPathTextbox)
+            formLayout.addRow(listenerUnrealEditorPathLabel, self.listenerUnrealEditorPathTextbox)
 
             # Adding buttons to layout
             layout.addWidget(self.startServerButton)
             layout.addWidget(launchEditorButton)
             layout.addWidget(launchClientButton)
+            layout.addWidget(syncFoldersButton)
             layout.addWidget(browseEditorButton)
             layout.addWidget(browseUprojectButton)
             layout.addLayout(formLayout)
+            layout.addWidget(self.statusBox)
 
             self.setLayout(layout)
         except Exception as e:
@@ -109,6 +188,7 @@ class UnrealSyncApp(QtWidgets.QWidget):
 
     def logMessage(self, message):
         print(message)  # Print to command prompt
+        self.statusBox.append(message)  # Append message to status box
 
     def startServer(self):
         try:
@@ -217,7 +297,9 @@ class UnrealSyncApp(QtWidgets.QWidget):
                 'unrealEditorPath': self.unrealEditorPath,
                 'uprojectPath': self.uprojectPath,
                 'session_name': self.session_name,
-                'concert_server_name': self.concert_server_name
+                'concert_server_name': self.concert_server_name,
+                'listenerUprojectPath': self.listenerUprojectPath,
+                'listenerUnrealEditorPath': self.listenerUnrealEditorPath
             }
             self.logMessage(f"Sending data to listener: {data}")
             self.sendDataToListener(data)
@@ -285,6 +367,95 @@ class UnrealSyncApp(QtWidgets.QWidget):
 
     def updateConcertServerName(self, text):
         self.concert_server_name = text
+
+    def updateListenerUprojectPath(self, text):
+        self.listenerUprojectPath = text
+
+    def updateListenerUnrealEditorPath(self, text):
+        self.listenerUnrealEditorPath = text
+
+    def syncFolders(self):
+        try:
+            editor_folder = os.path.dirname(self.uprojectPath)
+            listener_folder = os.path.dirname(self.listenerUprojectPath)
+
+            # Create and start sync thread
+            self.sync_thread = SyncThread(self, editor_folder, listener_folder)
+            self.sync_thread.progress.connect(self.logMessage)
+            self.sync_thread.start()
+
+            # Create progress dialog
+            self.progress_dialog = QtWidgets.QProgressDialog("Syncing folders...", "Cancel", 0, 0, self)
+            self.progress_dialog.setWindowTitle("Sync Progress")
+            self.progress_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+            self.progress_dialog.setAutoClose(False)
+            self.progress_dialog.canceled.connect(self.sync_thread.terminate)
+            self.sync_thread.finished.connect(self.progress_dialog.close)
+            self.progress_dialog.show()
+
+        except Exception as e:
+            self.logMessage(f'Error starting sync: {e}')
+
+    def calculate_checksum(self, file_path):
+        try:
+            with open(file_path, 'rb') as f:
+                file_hash = hashlib.md5()
+                while chunk := f.read(8192):
+                    file_hash.update(chunk)
+            return file_hash.hexdigest()
+        except Exception as e:
+            self.logMessage(f'Error calculating checksum for {file_path}: {e}')
+            return None
+
+    def getListenerChecksums(self, listener_folder):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((self.listener_ip, 65432))
+                message = {'command': 'get_checksums', 'folder': listener_folder}
+                
+                # Send the request
+                message_str = str(message).encode('utf-8')
+                message_length = len(message_str)
+                s.sendall(message_length.to_bytes(4, 'big'))
+                s.sendall(message_str)
+
+                # Receive the response
+                data_length = int.from_bytes(s.recv(4), 'big')
+                data = b''
+                while len(data) < data_length:
+                    chunk = s.recv(min(4096, data_length - len(data)))
+                    if not chunk:
+                        break
+                    data += chunk
+
+                if len(data) == data_length:
+                    response = data.decode('utf-8')
+                    return ast.literal_eval(response)
+                else:
+                    self.logMessage('Error: Incomplete data received')
+                    return {}
+
+        except Exception as e:
+            self.logMessage(f'Error getting checksums from listener: {str(e)}')
+            return {}
+
+    def sendFileToListener(self, file_path, dest_path):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((self.listener_ip, 65432))
+                with open(file_path, 'rb') as f:
+                    data = f.read()
+                message = {
+                    'command': 'sync_file',
+                    'dest_path': dest_path,
+                    'file_data': data.hex()
+                }
+                message_str = str(message).encode()
+                message_length = len(message_str)
+                s.sendall(message_length.to_bytes(4, 'big') + message_str)
+                self.logMessage(f'Sent file {file_path} to listener')
+        except Exception as e:
+            self.logMessage(f'Error sending file to listener: {e}')
 
 def main():
     try:
